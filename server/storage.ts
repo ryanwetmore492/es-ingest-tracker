@@ -277,7 +277,7 @@ export const storage: IStorage = {
 
   clearCredentials() {
     sqlite.prepare(
-      "UPDATE es_config SET username = '', password = '', api_key = '', auth_type = 'none' WHERE id = 1"
+      "UPDATE es_config SET host = 'http://localhost:9200', username = '', password = '', api_key = '', auth_type = 'none', kibana_host = '' WHERE id = 1"
     ).run();
   },
 };

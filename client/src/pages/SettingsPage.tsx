@@ -98,9 +98,9 @@ export default function SettingsPage() {
     mutationFn: () => apiRequest("POST", "/api/credentials/clear"),
     onSuccess: async () => {
       await queryClient.invalidateQueries({ queryKey: ["/api/config"] });
-      // Reset local form auth fields
-      setForm(p => ({ ...p, authType: "none", username: "", password: "", apiKey: "" }));
-      toast({ title: "Credentials cleared", description: "All authentication credentials removed from the database." });
+      // Reset local form — clear URLs and all auth fields
+      setForm(p => ({ ...p, host: "http://localhost:9200", kibanaHost: "", authType: "none", username: "", password: "", apiKey: "" }));
+      toast({ title: "Credentials cleared", description: "Connection URLs and all authentication credentials removed from the database." });
     },
     onError: (e: any) => toast({ title: "Clear failed", description: e.message, variant: "destructive" }),
   });
