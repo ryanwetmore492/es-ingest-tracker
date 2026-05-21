@@ -1,7 +1,7 @@
 import { useQuery } from "@tanstack/react-query";
 import { useState } from "react";
 import { apiRequest } from "@/lib/queryClient";
-import { BarChart, Bar, LineChart, Line, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer } from "recharts";
+import { BarChart, Bar, LineChart, Line, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer, Legend } from "recharts";
 import { Database, HardDrive, BarChart2, AlertCircle, Layers } from "lucide-react";
 import KpiCard from "@/components/KpiCard";
 import { formatBytes, formatGB, formatDocs } from "@/lib/format";
@@ -66,13 +66,32 @@ export default function OverviewPage() {
   // series values are already in GB (floats) from the endpoint — no conversion needed
   const barData = tfData
     ? tfData.labels.map((label: string, i: number) => {
-        const entry: Record<string, any> = { date: label };
+        const entry: Record<string, any> = { date: label, _docTotal: tfData.docTotals?.[i] ?? 0 };
         for (const idx of (tfData.topIndices ?? [])) {
           entry[idx] = +(tfData.series?.[idx]?.[i] ?? 0).toFixed(3);
         }
         return entry;
       })
     : [];
+
+  // Custom tooltip for bar chart — shows per-index GB + total doc count
+  const BarTooltipContent = ({ active, payload, label }: any) => {
+    if (!active || !payload?.length) return null;
+    const docTotal = payload[0]?.payload?._docTotal ?? 0;
+    return (
+      <div style={{ background: "hsl(var(--card))", border: "1px solid hsl(var(--border))", borderRadius: "8px", padding: "8px 10px", fontSize: "11px" }}>
+        <p style={{ color: "hsl(var(--foreground))", fontWeight: 600, marginBottom: 4 }}>{label}</p>
+        {payload.filter((p: any) => p.dataKey !== "_docTotal").map((p: any) => (
+          <p key={p.dataKey} style={{ color: p.color, margin: "2px 0" }}>
+            {truncateIndex(p.dataKey)}: {Number(p.value).toFixed(2)} GB
+          </p>
+        ))}
+        <p style={{ color: "hsl(var(--muted-foreground))", borderTop: "1px solid hsl(var(--border))", marginTop: 4, paddingTop: 4 }}>
+          Total Docs: <span style={{ color: "hsl(var(--foreground))", fontFamily: "monospace" }}>{formatDocs(docTotal)}</span>
+        </p>
+      </div>
+    );
+  };
 
   // Build line chart data — totals are already in GB from the endpoint
   const lineData = tfData
@@ -190,7 +209,7 @@ export default function OverviewPage() {
             <Skeleton className="h-56 w-full" />
           ) : (
             <ResponsiveContainer width="100%" height={230}>
-              <BarChart data={barData} margin={{ top: 4, right: 8, left: -10, bottom: 0 }}>
+              <BarChart data={barData} margin={{ top: 4, right: 8, left: -10, bottom: 0 }} barCategoryGap="40%">
                 <CartesianGrid strokeDasharray="3 3" stroke="hsl(var(--border))" vertical={false} />
                 <XAxis
                   dataKey="date"
@@ -205,12 +224,7 @@ export default function OverviewPage() {
                   axisLine={false}
                   tickFormatter={(v) => `${v}G`}
                 />
-                <Tooltip
-                  contentStyle={{ background: "hsl(var(--card))", border: "1px solid hsl(var(--border))", borderRadius: "8px", fontSize: "11px" }}
-                  formatter={(val: any, name: any) => [`${Number(val).toFixed(2)} GB`, truncateIndex(name)]}
-                  labelStyle={{ color: "hsl(var(--foreground))", fontWeight: 600 }}
-                  cursor={{ fill: "hsl(var(--muted) / 0.5)" }}
-                />
+                <Tooltip content={<BarTooltipContent />} cursor={{ fill: "hsl(var(--muted) / 0.5)" }} />
                 {(tfData?.topIndices ?? []).map((idx: string, i: number) => (
                   <Bar
                     key={idx}
@@ -235,7 +249,7 @@ export default function OverviewPage() {
             <Skeleton className="h-56 w-full" />
           ) : (
             <ResponsiveContainer width="100%" height={230}>
-              <LineChart data={lineData} margin={{ top: 4, right: 8, left: -10, bottom: 0 }}>
+              <LineChart data={lineData} margin={{ top: 4, right: 40, left: -10, bottom: 0 }}>
                 <CartesianGrid strokeDasharray="3 3" stroke="hsl(var(--border))" vertical={false} />
                 <XAxis
                   dataKey="date"
@@ -244,22 +258,60 @@ export default function OverviewPage() {
                   axisLine={false}
                   interval="preserveStartEnd"
                 />
+                {/* Left Y-axis: Store size in GB */}
                 <YAxis
+                  yAxisId="left"
                   tick={{ fontSize: 11, fill: "hsl(var(--muted-foreground))", fontFamily: "JetBrains Mono" }}
                   tickLine={false}
                   axisLine={false}
                   tickFormatter={(v) => `${v}G`}
                 />
+                {/* Right Y-axis: Document count */}
+                <YAxis
+                  yAxisId="right"
+                  orientation="right"
+                  tick={{ fontSize: 10, fill: "hsl(var(--muted-foreground) / 0.7)", fontFamily: "JetBrains Mono" }}
+                  tickLine={false}
+                  axisLine={false}
+                  tickFormatter={(v) => {
+                    if (v >= 1_000_000) return `${(v / 1_000_000).toFixed(0)}M`;
+                    if (v >= 1_000) return `${(v / 1_000).toFixed(0)}K`;
+                    return String(v);
+                  }}
+                  width={45}
+                />
                 <Tooltip
                   contentStyle={{ background: "hsl(var(--card))", border: "1px solid hsl(var(--border))", borderRadius: "8px", fontSize: "11px" }}
                   formatter={(val: any, name: any) => [
                     name === "total" ? `${Number(val).toFixed(1)} GB` : formatDocs(Number(val)),
-                    name === "total" ? "Store Size" : "Documents",
+                    name === "total" ? "Store Size" : "Doc Count",
                   ]}
                   labelStyle={{ color: "hsl(var(--foreground))", fontWeight: 600 }}
                   cursor={{ stroke: "hsl(var(--border))" }}
                 />
-                <Line type="monotone" dataKey="total" stroke="hsl(196, 85%, 52%)" strokeWidth={2} dot={{ r: 3, fill: "hsl(196, 85%, 52%)" }} activeDot={{ r: 5 }} />
+                <Legend
+                  formatter={(value) => value === "total" ? "Store Size (GB)" : "Doc Count"}
+                  wrapperStyle={{ fontSize: "10px", paddingTop: "6px" }}
+                />
+                <Line
+                  yAxisId="left"
+                  type="monotone"
+                  dataKey="total"
+                  stroke="hsl(196, 85%, 52%)"
+                  strokeWidth={2}
+                  dot={{ r: 3, fill: "hsl(196, 85%, 52%)" }}
+                  activeDot={{ r: 5 }}
+                />
+                <Line
+                  yAxisId="right"
+                  type="monotone"
+                  dataKey="docs"
+                  stroke="hsl(280, 55%, 65%)"
+                  strokeWidth={1.5}
+                  strokeDasharray="4 2"
+                  dot={false}
+                  activeDot={{ r: 4, fill: "hsl(280, 55%, 65%)" }}
+                />
               </LineChart>
             </ResponsiveContainer>
           )}
