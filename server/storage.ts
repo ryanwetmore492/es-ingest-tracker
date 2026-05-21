@@ -9,18 +9,41 @@ import {
   type IndexSnapshot, type InsertIndexSnapshot,
 } from "@shared/schema";
 
+// ---------------------------------------------------------------------------
+// In-memory credential store — never written to SQLite
+// ---------------------------------------------------------------------------
+export interface SessionCredentials {
+  authType: "basic" | "apikey" | "none";
+  username: string;
+  password: string;
+  apiKey: string;
+}
+
+const DEFAULT_CREDS: SessionCredentials = {
+  authType: "none",
+  username: "",
+  password: "",
+  apiKey: "",
+};
+
+let _sessionCreds: SessionCredentials = { ...DEFAULT_CREDS };
+
+export const sessionCreds = {
+  get(): SessionCredentials { return { ..._sessionCreds }; },
+  set(c: Partial<SessionCredentials>) { _sessionCreds = { ..._sessionCreds, ...c }; },
+  clear() { _sessionCreds = { ...DEFAULT_CREDS }; },
+};
+
 const sqlite = new Database("data.db");
 const db = drizzle(sqlite);
 
 // Create tables if they don't exist
+// Credentials (auth_type, username, password, api_key) are intentionally absent
+// from this table — they are stored in server memory only.
 sqlite.exec(`
   CREATE TABLE IF NOT EXISTS es_config (
     id INTEGER PRIMARY KEY AUTOINCREMENT,
     host TEXT NOT NULL DEFAULT 'http://localhost:9200',
-    auth_type TEXT NOT NULL DEFAULT 'basic',
-    username TEXT NOT NULL DEFAULT '',
-    password TEXT NOT NULL DEFAULT '',
-    api_key TEXT NOT NULL DEFAULT '',
     kibana_host TEXT NOT NULL DEFAULT '',
     use_mock_data INTEGER NOT NULL DEFAULT 1,
     auto_refresh_enabled INTEGER NOT NULL DEFAULT 0,
@@ -66,20 +89,30 @@ sqlite.exec(`
   );
 `);
 
-// Safe migration: add new columns to existing tables
+// Safe migrations for existing databases
 const existingCols = (sqlite.prepare("PRAGMA table_info(es_config)").all() as any[]).map((c: any) => c.name);
-if (!existingCols.includes("auth_type")) {
-  sqlite.exec("ALTER TABLE es_config ADD COLUMN auth_type TEXT NOT NULL DEFAULT 'basic'");
-}
-if (!existingCols.includes("api_key")) {
-  sqlite.exec("ALTER TABLE es_config ADD COLUMN api_key TEXT NOT NULL DEFAULT ''");
-}
+
+// Add any missing non-credential columns
 if (!existingCols.includes("auto_refresh_enabled")) {
   sqlite.exec("ALTER TABLE es_config ADD COLUMN auto_refresh_enabled INTEGER NOT NULL DEFAULT 0");
 }
 if (!existingCols.includes("auto_refresh_interval")) {
   sqlite.exec("ALTER TABLE es_config ADD COLUMN auto_refresh_interval INTEGER NOT NULL DEFAULT 300");
 }
+
+// Drop credential columns from existing databases if present.
+// SQLite supports DROP COLUMN since version 3.35 (2021-03-12).
+// We wrap each in a try/catch so older SQLite builds skip gracefully.
+for (const col of ["auth_type", "username", "password", "api_key"]) {
+  if (existingCols.includes(col)) {
+    try {
+      sqlite.exec(`ALTER TABLE es_config DROP COLUMN ${col}`);
+    } catch (_) {
+      // SQLite < 3.35 — can't drop columns; they'll remain but are never read
+    }
+  }
+}
+
 const snapCols = (sqlite.prepare("PRAGMA table_info(index_snapshots)").all() as any[]).map((c: any) => c.name);
 if (!snapCols.includes("snapshot_hour")) {
   sqlite.exec("ALTER TABLE index_snapshots ADD COLUMN snapshot_hour INTEGER NOT NULL DEFAULT 0");
@@ -88,7 +121,7 @@ if (!snapCols.includes("snapshot_hour")) {
 // Seed default config if empty
 const configCount = sqlite.prepare("SELECT COUNT(*) as c FROM es_config").get() as { c: number };
 if (configCount.c === 0) {
-  sqlite.exec(`INSERT INTO es_config (host, username, password, kibana_host, use_mock_data) VALUES ('http://localhost:9200','','','',1)`);
+  sqlite.exec(`INSERT INTO es_config (host, kibana_host, use_mock_data) VALUES ('http://localhost:9200','',1)`);
 }
 
 // Seed default alert rules if empty
@@ -276,8 +309,11 @@ export const storage: IStorage = {
   },
 
   clearCredentials() {
+    // Wipe in-memory credentials
+    sessionCreds.clear();
+    // Also reset host/kibana URLs in the DB
     sqlite.prepare(
-      "UPDATE es_config SET host = 'http://localhost:9200', username = '', password = '', api_key = '', auth_type = 'none', kibana_host = '' WHERE id = 1"
+      "UPDATE es_config SET host = 'http://localhost:9200', kibana_host = '' WHERE id = 1"
     ).run();
   },
 };

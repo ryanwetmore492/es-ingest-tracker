@@ -1,6 +1,6 @@
 import type { Express } from "express";
 import type { Server } from "http";
-import { storage } from "./storage";
+import { storage, sessionCreds } from "./storage";
 import { generateDailySnapshots, generateHourlySnapshots, getMockCurrentIndices } from "./mockData";
 import { insertEsConfigSchema, insertAlertRuleSchema } from "@shared/schema";
 import { z } from "zod";
@@ -144,36 +144,55 @@ export async function registerRoutes(httpServer: Server, app: Express) {
   // --- Config ---
   app.get("/api/config", (_req, res) => {
     const cfg = storage.getConfig();
-    if (!cfg) return res.json({ host: "", username: "", password: "", kibanaHost: "", useMockData: true });
-    // Don't leak password
-    res.json({ ...cfg, password: cfg.password ? "••••••••" : "", apiKey: cfg.apiKey ? "••••••••" : "" });
+    const creds = sessionCreds.get();
+    const base = cfg ?? { host: "http://localhost:9200", kibanaHost: "", useMockData: true, autoRefreshEnabled: false, autoRefreshInterval: 300 };
+    // Merge persisted non-sensitive fields with in-memory credentials.
+    // Passwords are masked in the response — they are never sent back to the client in full.
+    res.json({
+      ...base,
+      authType: creds.authType,
+      username: creds.username,
+      password: creds.password ? "\u2022\u2022\u2022\u2022\u2022\u2022\u2022\u2022" : "",
+      apiKey: creds.apiKey ? "\u2022\u2022\u2022\u2022\u2022\u2022\u2022\u2022" : "",
+      credentialsInMemoryOnly: true,
+    });
   });
 
   app.post("/api/config", (req, res) => {
     try {
-      const data = insertEsConfigSchema.parse(req.body);
-      // Preserve masked secrets if placeholder sent back
-      const existing = storage.getConfig();
-      if (data.password === "••••••••" && existing) {
-        data.password = existing.password;
-      }
-      if ((data.apiKey === "••••••••" || !data.apiKey) && existing?.apiKey) {
-        data.apiKey = existing.apiKey;
-      }
+      // Separate credential fields (in-memory only) from persisted fields
+      const { authType, username, password, apiKey, ...rest } = req.body;
+      const data = insertEsConfigSchema.parse(rest);
 
-      // Detect mode change — clear stale snapshots AND alert events so old data never bleeds through
+      // Update in-memory credentials — preserve masked placeholders
+      const existingCreds = sessionCreds.get();
+      sessionCreds.set({
+        authType: authType ?? existingCreds.authType,
+        username: username ?? existingCreds.username,
+        password: password === "\u2022\u2022\u2022\u2022\u2022\u2022\u2022\u2022" ? existingCreds.password : (password ?? ""),
+        apiKey: apiKey === "\u2022\u2022\u2022\u2022\u2022\u2022\u2022\u2022" ? existingCreds.apiKey : (apiKey ?? ""),
+      });
+
+      // Detect mode change — clear stale snapshots AND alert events
+      const existing = storage.getConfig();
       const modeChanged = existing && (existing.useMockData !== data.useMockData);
       if (modeChanged) {
         storage.clearAllSnapshots();
         storage.clearAlertEvents();
-        // Switching back to mock: immediately re-seed so charts aren't empty
-        if (data.useMockData) {
-          reseedMockData();
-        }
+        if (data.useMockData) reseedMockData();
       }
 
+      // Only persist non-sensitive fields to SQLite
       const cfg = storage.upsertConfig(data);
-      res.json({ ...cfg, password: cfg.password ? "••••••••" : "", apiKey: cfg.apiKey ? "••••••••" : "" });
+      const creds = sessionCreds.get();
+      res.json({
+        ...cfg,
+        authType: creds.authType,
+        username: creds.username,
+        password: creds.password ? "\u2022\u2022\u2022\u2022\u2022\u2022\u2022\u2022" : "",
+        apiKey: creds.apiKey ? "\u2022\u2022\u2022\u2022\u2022\u2022\u2022\u2022" : "",
+        credentialsInMemoryOnly: true,
+      });
     } catch (e: any) {
       res.status(400).json({ error: e.message });
     }
@@ -186,7 +205,8 @@ export async function registerRoutes(httpServer: Server, app: Express) {
       const useMock = !cfg || cfg.useMockData;
 
       if (!useMock) {
-        const liveData = await fetchLiveData(cfg!.host, cfg!.authType ?? 'basic', cfg!.username, cfg!.password, cfg!.apiKey ?? '');
+        const creds = sessionCreds.get();
+        const liveData = await fetchLiveData(cfg!.host, creds.authType, creds.username, creds.password, creds.apiKey);
         const today = new Date().toISOString().slice(0, 10);
         const now = new Date();
         const snapshotHour = now.getHours();
@@ -564,8 +584,14 @@ export async function registerRoutes(httpServer: Server, app: Express) {
         apiKey: z.string().optional().default(""),
       }).parse(req.body);
 
+      // For test-connection, use submitted fields directly (they come from the form,
+      // not from the DB). If the user sent masked placeholders, fall back to in-memory.
+      const existingCreds = sessionCreds.get();
+      const resolvedPassword = password === "\u2022\u2022\u2022\u2022\u2022\u2022\u2022\u2022" ? existingCreds.password : password;
+      const resolvedApiKey = apiKey === "\u2022\u2022\u2022\u2022\u2022\u2022\u2022\u2022" ? existingCreds.apiKey : apiKey;
+
       const headers: Record<string, string> = { Accept: "application/json" };
-      const authHeader = buildAuthHeader(authType, username, password, apiKey);
+      const authHeader = buildAuthHeader(authType, username, resolvedPassword, resolvedApiKey);
       if (authHeader) headers["Authorization"] = authHeader;
 
       const resp = await fetch(`${host.replace(/\/$/, "")}/_cluster/health`, { headers });

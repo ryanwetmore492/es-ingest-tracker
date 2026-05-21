@@ -3,13 +3,12 @@ import { createInsertSchema } from "drizzle-zod";
 import { z } from "zod";
 
 // ES connection config (single row, id=1)
+// NOTE: credentials (authType, username, password, apiKey) are intentionally
+// NOT stored in SQLite — they live in server memory only for the session.
+// Only non-sensitive fields (host, kibanaHost, useMockData, autoRefresh*) are persisted.
 export const esConfig = sqliteTable("es_config", {
   id: integer("id").primaryKey({ autoIncrement: true }),
   host: text("host").notNull().default("http://localhost:9200"),
-  authType: text("auth_type").notNull().default("basic"),
-  username: text("username").notNull().default(""),
-  password: text("password").notNull().default(""),
-  apiKey: text("api_key").notNull().default(""),
   kibanaHost: text("kibana_host").notNull().default(""),
   useMockData: integer("use_mock_data", { mode: "boolean" }).notNull().default(true),
   // Auto-refresh: interval in seconds (0 = disabled), only active in live mode

@@ -166,6 +166,16 @@ export default function SettingsPage() {
           {form.useMockData && <Badge variant="outline" className="text-xs ml-auto">Disabled in mock mode</Badge>}
         </div>
 
+        {/* Session-only credential notice */}
+        {!form.useMockData && (
+          <div className="flex items-start gap-2 bg-emerald-500/10 border border-emerald-500/20 rounded-md p-3 text-xs text-emerald-400">
+            <Lock size={12} className="flex-shrink-0 mt-0.5" />
+            <span>
+              <strong>Credentials are never stored on disk.</strong> Username, password, and API key are held in server memory only and cleared on server restart.
+            </span>
+          </div>
+        )}
+
         {/* Host */}
         <div className="space-y-1.5">
           <Label className="text-xs">Elasticsearch Host</Label>
@@ -457,7 +467,7 @@ export default function SettingsPage() {
           <div>
             <p className="text-xs font-medium text-foreground">Clear Stored Credentials</p>
             <p className="text-xs text-muted-foreground mt-0.5">
-              Wipes username, password, and API key from the database immediately. Auth type is set to None. Use before decommissioning or sharing this instance.
+              Clears all in-memory credentials (username, password, API key) and resets connection URLs. Since credentials are never written to disk, this wipes the session copy only.
             </p>
           </div>
           <Button
