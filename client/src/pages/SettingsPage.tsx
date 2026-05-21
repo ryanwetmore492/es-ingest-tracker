@@ -1,6 +1,6 @@
 import { useQuery, useMutation } from "@tanstack/react-query";
 import { useState, useEffect } from "react";
-import { ServerCog, Eye, EyeOff, CheckCircle, XCircle, Loader2, Info, ShieldCheck, Key, User } from "lucide-react";
+import { ServerCog, Eye, EyeOff, CheckCircle, XCircle, Loader2, Info, ShieldCheck, Key, User, Trash2 } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
@@ -71,9 +71,22 @@ export default function SettingsPage() {
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: ["/api/config"] });
       queryClient.invalidateQueries({ queryKey: ["/api/dashboard/summary"] });
+      queryClient.invalidateQueries({ queryKey: ["/api/dashboard/indices"] });
+      queryClient.invalidateQueries({ queryKey: ["/api/dashboard/daily-ingest"] });
+      queryClient.invalidateQueries({ queryKey: ["/api/dashboard/trend"] });
       toast({ title: "Settings saved", description: "Connection settings updated." });
     },
     onError: (e: any) => toast({ title: "Save failed", description: e.message, variant: "destructive" }),
+  });
+
+  const clearSnapshots = useMutation({
+    mutationFn: () => apiRequest("POST", "/api/snapshots/clear"),
+    onSuccess: async (res: any) => {
+      const data = await res.json?.() ?? res;
+      await queryClient.invalidateQueries();
+      toast({ title: "Snapshot history cleared", description: data.message ?? "All historical data removed." });
+    },
+    onError: (e: any) => toast({ title: "Clear failed", description: e.message, variant: "destructive" }),
   });
 
   async function testConnection() {
@@ -352,6 +365,34 @@ export default function SettingsPage() {
           <li>Alert rules are evaluated on each refresh against the most recent snapshot.</li>
           <li>Credentials are stored server-side only and never appear in full in API responses.</li>
         </ul>
+      </div>
+
+      {/* Danger zone */}
+      <div className="bg-card border border-destructive/30 rounded-lg p-4 space-y-3">
+        <p className="text-sm font-semibold text-foreground flex items-center gap-2">
+          <Trash2 size={14} className="text-destructive" />
+          Danger Zone
+        </p>
+        <div className="flex items-center justify-between gap-4">
+          <div>
+            <p className="text-xs font-medium text-foreground">Clear Snapshot History</p>
+            <p className="text-xs text-muted-foreground mt-0.5">
+              Removes all stored index snapshots. Charts and growth % will be empty until the next refresh.
+              {form.useMockData ? " Mock data will be re-seeded immediately." : " Switch to mock mode to re-seed demo data."}
+            </p>
+          </div>
+          <Button
+            data-testid="button-clear-snapshots"
+            variant="destructive"
+            size="sm"
+            className="flex-shrink-0 gap-1.5 text-xs h-8"
+            onClick={() => clearSnapshots.mutate()}
+            disabled={clearSnapshots.isPending}
+          >
+            {clearSnapshots.isPending ? <Loader2 size={12} className="animate-spin" /> : <Trash2 size={12} />}
+            {clearSnapshots.isPending ? "Clearing…" : "Clear History"}
+          </Button>
+        </div>
       </div>
 
       <div className="flex justify-end">

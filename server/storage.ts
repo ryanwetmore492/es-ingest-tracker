@@ -111,6 +111,7 @@ export interface IStorage {
   getSnapshotsForRange(startDate: string, endDate: string): IndexSnapshot[];
   getLatestSnapshotPerIndex(): IndexSnapshot[];
   deleteSnapshotsOlderThan(days: number): void;
+  clearAllSnapshots(): void;
 }
 
 export const storage: IStorage = {
@@ -210,5 +211,9 @@ export const storage: IStorage = {
     cutoff.setDate(cutoff.getDate() - days);
     const cutoffStr = cutoff.toISOString().slice(0, 10);
     sqlite.prepare("DELETE FROM index_snapshots WHERE snapshot_date < ?").run(cutoffStr);
+  },
+
+  clearAllSnapshots() {
+    sqlite.prepare("DELETE FROM index_snapshots").run();
   },
 };

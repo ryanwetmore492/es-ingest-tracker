@@ -138,8 +138,20 @@ export async function registerRoutes(httpServer: Server, app: Express) {
       if ((data.apiKey === "••••••••" || !data.apiKey) && existing?.apiKey) {
         data.apiKey = existing.apiKey;
       }
+
+      // Detect mode change — clear stale snapshots so old data never bleeds through
+      const modeChanged = existing && (existing.useMockData !== data.useMockData);
+      if (modeChanged) {
+        storage.clearAllSnapshots();
+        // Switching back to mock: immediately re-seed so charts aren't empty
+        if (data.useMockData) {
+          const snapshots = generateDailySnapshots(6);
+          storage.saveSnapshots(snapshots);
+        }
+      }
+
       const cfg = storage.upsertConfig(data);
-      res.json({ ...cfg, password: cfg.password ? "••••••••" : "" });
+      res.json({ ...cfg, password: cfg.password ? "••••••••" : "", apiKey: cfg.apiKey ? "••••••••" : "" });
     } catch (e: any) {
       res.status(400).json({ error: e.message });
     }
@@ -372,6 +384,19 @@ export async function registerRoutes(httpServer: Server, app: Express) {
   app.post("/api/alerts/events/clear", (_req, res) => {
     storage.clearAcknowledgedEvents();
     res.json({ success: true });
+  });
+
+  // --- Clear snapshot history ---
+  app.post("/api/snapshots/clear", (req, res) => {
+    storage.clearAllSnapshots();
+    // Re-seed mock data if in mock mode
+    const cfg = storage.getConfig();
+    if (!cfg || cfg.useMockData) {
+      const snapshots = generateDailySnapshots(6);
+      storage.saveSnapshots(snapshots);
+      return res.json({ success: true, message: "Snapshots cleared and mock data re-seeded" });
+    }
+    res.json({ success: true, message: "All snapshot history cleared" });
   });
 
   // --- Test connection ---
