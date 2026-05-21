@@ -1,6 +1,6 @@
 import { useQuery, useMutation } from "@tanstack/react-query";
 import { useState, useEffect } from "react";
-import { ServerCog, Eye, EyeOff, CheckCircle, XCircle, Loader2, Info, ShieldCheck, Key, User, Trash2, ShieldOff, Timer } from "lucide-react";
+import { ServerCog, Eye, EyeOff, CheckCircle, XCircle, Loader2, Info, ShieldCheck, Key, User, Trash2, ShieldOff, Timer, Lock } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
