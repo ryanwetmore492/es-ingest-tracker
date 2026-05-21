@@ -172,8 +172,11 @@ export async function registerRoutes(httpServer: Server, app: Express) {
       if (!useMock) {
         const liveData = await fetchLiveData(cfg!.host, cfg!.authType ?? 'basic', cfg!.username, cfg!.password, cfg!.apiKey ?? '');
         const today = new Date().toISOString().slice(0, 10);
+        const now = new Date();
+        const snapshotHour = now.getHours();
         const snapshots = liveData.map(row => ({
           snapshotDate: today,
+          snapshotHour,
           indexName: row.index,
           docsCount: row.docsCount,
           storeSizeBytes: row.storeSize,
@@ -182,9 +185,8 @@ export async function registerRoutes(httpServer: Server, app: Express) {
           health: row.health,
           status: row.status,
         }));
-        // Delete today's existing snapshots then re-insert
-        const db_module = await import("better-sqlite3");
-        storage.saveSnapshots(snapshots);
+        // Replace today's snapshots (same hour) so we don't accumulate duplicate rows
+        storage.replaceHourlySnapshots(today, snapshotHour, snapshots);
       } else {
         // Re-seed mock if today is missing
         const today = new Date().toISOString().slice(0, 10);
@@ -346,35 +348,29 @@ export async function registerRoutes(httpServer: Server, app: Express) {
 
   // --- Timeframe trend (supports 1h, 6h, 12h, 24h, 48h, 168h=7d) ---
   app.get("/api/dashboard/timeframe", (req, res) => {
-    const hours = Math.min(Math.max(parseInt(req.query.hours as string ?? "24", 10), 1), 168);
-    const snapshots = storage.getSnapshotsForTimeframe(hours);
+    const hours = Math.min(Math.max(parseInt(req.query.hours as string ?? "168", 10), 1), 168);
 
-    // Build time buckets — for <=24h use hourly buckets, else daily
+    // Use hourly buckets for ≤48h, daily for >48h
     const useHourly = hours <= 48;
-    const bucketMap = new Map<string, number>(); // label → total bytes
-    const docBucketMap = new Map<string, number>();
 
-    for (const snap of snapshots) {
-      let label: string;
+    // Helper: snap → bucket label
+    function snapLabel(snap: any): string {
       if (useHourly) {
         const d = new Date(snap.capturedAt);
-        label = `${d.toLocaleDateString("en-US", { month: "short", day: "numeric" })} ${String(d.getHours()).padStart(2, "0")}:00`;
+        return `${d.toLocaleDateString("en-US", { month: "short", day: "numeric" })} ${String(d.getHours()).padStart(2, "0")}:00`;
       } else {
-        const d = new Date(snap.snapshotDate + "T12:00:00");
-        label = d.toLocaleDateString("en-US", { month: "short", day: "numeric" });
+        const d = new Date(snap.snapshotDate + "T12:00:00Z");
+        return d.toLocaleDateString("en-US", { month: "short", day: "numeric" });
       }
-      bucketMap.set(label, (bucketMap.get(label) ?? 0) + snap.storeSizeBytes);
-      docBucketMap.set(label, (docBucketMap.get(label) ?? 0) + snap.docsCount);
     }
 
-    // Generate ordered bucket labels
+    // Generate ordered bucket labels covering the full window
     const labels: string[] = [];
     const now = new Date();
     if (useHourly) {
       for (let h = hours; h >= 0; h--) {
         const t = new Date(now);
-        t.setHours(t.getHours() - h);
-        t.setMinutes(0, 0, 0);
+        t.setHours(t.getHours() - h, 0, 0, 0);
         const label = `${t.toLocaleDateString("en-US", { month: "short", day: "numeric" })} ${String(t.getHours()).padStart(2, "0")}:00`;
         if (!labels.includes(label)) labels.push(label);
       }
@@ -387,40 +383,88 @@ export async function registerRoutes(httpServer: Server, app: Express) {
       }
     }
 
-    const totals = labels.map(l => +(( bucketMap.get(l) ?? 0) / 1_073_741_824).toFixed(2));
-    const docTotals = labels.map(l => docBucketMap.get(l) ?? 0);
+    // Fetch snapshots covering this window PLUS one extra prior bucket for delta
+    // (extend lookback by one bucket so we can diff the first visible bucket)
+    const extraHours = useHourly ? hours + 1 : hours + 24;
+    const snapshots = storage.getSnapshotsForTimeframe(extraHours);
 
-    // Per-index series for bar chart (top 6 non-system)
+    // ── Trend line: aggregate total store size per bucket (sum latest per index per bucket) ──
+    // For each bucket, sum the LATEST size seen for each index within that bucket
+    // This prevents duplicate inflation when multiple refresh snapshots land in same bucket.
+    type BucketIndexMap = Map<string, Map<string, number>>; // bucket → indexName → maxBytes
+    const bucketIndexSize: BucketIndexMap = new Map();
+    const bucketIndexDocs: Map<string, Map<string, number>> = new Map();
+
+    for (const snap of snapshots) {
+      const label = snapLabel(snap);
+      if (!bucketIndexSize.has(label)) bucketIndexSize.set(label, new Map());
+      if (!bucketIndexDocs.has(label)) bucketIndexDocs.set(label, new Map());
+      // keep latest (highest captured_at = highest bytes for live polls)
+      const existing = bucketIndexSize.get(label)!.get(snap.indexName) ?? -1;
+      if (snap.storeSizeBytes >= existing) {
+        bucketIndexSize.get(label)!.set(snap.indexName, snap.storeSizeBytes);
+        bucketIndexDocs.get(label)!.set(snap.indexName, snap.docsCount);
+      }
+    }
+
+    const totals = labels.map(l => {
+      const m = bucketIndexSize.get(l);
+      if (!m) return 0;
+      let sum = 0;
+      for (const v of m.values()) sum += v;
+      return +(sum / 1_073_741_824).toFixed(2);
+    });
+    const docTotals = labels.map(l => {
+      const m = bucketIndexDocs.get(l);
+      if (!m) return 0;
+      let sum = 0;
+      for (const v of m.values()) sum += v;
+      return sum;
+    });
+
+    // ── Bar chart: per-index ingest delta per bucket ──
     const latestSnaps = storage.getLatestSnapshotPerIndex();
     const topIndices = latestSnaps.filter(s => !s.indexName.startsWith(".")).slice(0, 6).map(s => s.indexName);
+
+    // Build per-index, per-bucket size map (including the extra pre-window bucket)
+    const allLabels = new Set<string>();
+    for (const snap of snapshots) allLabels.add(snapLabel(snap));
 
     const indexBuckets = new Map<string, Map<string, number>>();
     for (const idx of topIndices) indexBuckets.set(idx, new Map());
 
     for (const snap of snapshots) {
       if (!topIndices.includes(snap.indexName)) continue;
-      let label: string;
-      if (useHourly) {
-        const d = new Date(snap.capturedAt);
-        label = `${d.toLocaleDateString("en-US", { month: "short", day: "numeric" })} ${String(d.getHours()).padStart(2, "0")}:00`;
-      } else {
-        const d = new Date(snap.snapshotDate + "T12:00:00");
-        label = d.toLocaleDateString("en-US", { month: "short", day: "numeric" });
-      }
+      const label = snapLabel(snap);
       const m = indexBuckets.get(snap.indexName)!;
-      // Keep max size seen in this bucket (last snapshot in the hour)
+      // Keep max (latest) size per bucket per index
       if (!m.has(label) || snap.storeSizeBytes > m.get(label)!) {
         m.set(label, snap.storeSizeBytes);
       }
     }
 
-    // Compute delta per bucket for bar chart
+    // Build the full ordered label list (may include one pre-window bucket)
+    const allOrderedLabels = [...labels]; // labels already covers the visible window
+
+    // Count distinct buckets that actually have data (to detect if we have enough to diff)
     const series: Record<string, number[]> = {};
     for (const idx of topIndices) {
       const m = indexBuckets.get(idx)!;
-      const vals = labels.map(l => (m.get(l) ?? 0) / 1_073_741_824);
-      // Delta = current - previous
-      series[idx] = vals.map((v, i) => i === 0 ? +(v * 0.05).toFixed(3) : +Math.max(0, v - vals[i - 1]).toFixed(3));
+      const vals = allOrderedLabels.map(l => m.has(l) ? m.get(l)! / 1_073_741_824 : null);
+
+      series[idx] = vals.map((v, i) => {
+        if (v === null) return 0;
+        // Find the previous non-null bucket for diffing
+        let prev: number | null = null;
+        for (let j = i - 1; j >= 0; j--) {
+          if (vals[j] !== null) { prev = vals[j]; break; }
+        }
+        if (prev === null) {
+          // No prior snapshot: show the absolute size so chart isn't empty
+          return +v.toFixed(3);
+        }
+        return +Math.max(0, v - prev).toFixed(3);
+      });
     }
 
     res.json({ labels, totals, docTotals, series, topIndices, useHourly, hours });

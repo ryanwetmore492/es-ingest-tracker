@@ -120,6 +120,7 @@ export interface IStorage {
 
   // Snapshots
   saveSnapshots(snapshots: InsertIndexSnapshot[]): void;
+  replaceHourlySnapshots(date: string, hour: number, snapshots: InsertIndexSnapshot[]): void;
   getSnapshotsByDate(date: string): IndexSnapshot[];
   getSnapshotsForRange(startDate: string, endDate: string): IndexSnapshot[];
   getLatestSnapshotPerIndex(): IndexSnapshot[];
@@ -185,6 +186,18 @@ export const storage: IStorage = {
   saveSnapshots(snapshots) {
     for (const snap of snapshots) {
       db.insert(indexSnapshots).values({ ...snap, capturedAt: new Date().toISOString() }).run();
+    }
+  },
+
+  replaceHourlySnapshots(date, hour, snapshots) {
+    // Delete existing rows for this date+hour, then insert fresh ones.
+    // This prevents duplicate accumulation when polling runs multiple times per hour.
+    sqlite.prepare(
+      "DELETE FROM index_snapshots WHERE snapshot_date = ? AND snapshot_hour = ?"
+    ).run(date, hour);
+    const capturedAt = new Date().toISOString();
+    for (const snap of snapshots) {
+      db.insert(indexSnapshots).values({ ...snap, capturedAt }).run();
     }
   },
 
