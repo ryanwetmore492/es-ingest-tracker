@@ -112,7 +112,7 @@ POST /_security/api_key
 }
 ```
 
-> On Elastic Cloud or ECE, the built-in `monitoring_user` role also satisfies these requirements.
+> **Elastic Cloud / ECE note:** The built-in `monitoring_user` role does **not** satisfy these requirements — it lacks the `monitor` cluster privilege needed for `_cluster/health` and `_cat/indices`. Create the custom role above or use a scoped API key instead.
 
 ---
 
