@@ -2,6 +2,7 @@ import { useLocation, Link } from "wouter";
 import { useHashLocation } from "wouter/use-hash-location";
 import { useQuery } from "@tanstack/react-query";
 import { BarChart2, Layers, Bell, Settings, RefreshCw, Database } from "lucide-react";
+import { SiGithub } from "react-icons/si";
 import { cn } from "@/lib/utils";
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
@@ -85,8 +86,8 @@ export default function Sidebar() {
         })}
       </nav>
 
-      {/* Refresh */}
-      <div className="p-3 border-t border-border">
+      {/* Refresh + Version */}
+      <div className="p-3 border-t border-border space-y-2">
         <Button
           data-testid="button-refresh"
           variant="secondary"
@@ -98,9 +99,17 @@ export default function Sidebar() {
           <RefreshCw size={13} className={refreshing ? "animate-spin" : ""} />
           {refreshing ? "Refreshing…" : "Refresh Data"}
         </Button>
-        <p className="text-xs text-muted-foreground text-center mt-2 leading-tight">
-          Elasticsearch<br />Ingest Dashboard
-        </p>
+        <a
+          href="https://github.com/ryanwetmore492/es-ingest-tracker"
+          target="_blank"
+          rel="noopener noreferrer"
+          data-testid="link-github"
+          className="flex items-center justify-center gap-1.5 text-muted-foreground hover:text-foreground transition-colors"
+          title="View on GitHub"
+        >
+          <SiGithub size={11} />
+          <span className="text-xs">v1.0.0</span>
+        </a>
       </div>
     </aside>
   );

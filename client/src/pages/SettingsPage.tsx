@@ -1,6 +1,6 @@
 import { useQuery, useMutation } from "@tanstack/react-query";
 import { useState, useEffect } from "react";
-import { ServerCog, Eye, EyeOff, CheckCircle, XCircle, Loader2, Info, ShieldCheck, Key, User, Trash2 } from "lucide-react";
+import { ServerCog, Eye, EyeOff, CheckCircle, XCircle, Loader2, Info, ShieldCheck, Key, User, Trash2, ShieldOff } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
@@ -85,6 +85,17 @@ export default function SettingsPage() {
       const data = await res.json?.() ?? res;
       await queryClient.invalidateQueries();
       toast({ title: "Snapshot history cleared", description: data.message ?? "All historical data removed." });
+    },
+    onError: (e: any) => toast({ title: "Clear failed", description: e.message, variant: "destructive" }),
+  });
+
+  const clearCredentials = useMutation({
+    mutationFn: () => apiRequest("POST", "/api/credentials/clear"),
+    onSuccess: async () => {
+      await queryClient.invalidateQueries({ queryKey: ["/api/config"] });
+      // Reset local form auth fields
+      setForm(p => ({ ...p, authType: "none", username: "", password: "", apiKey: "" }));
+      toast({ title: "Credentials cleared", description: "All authentication credentials removed from the database." });
     },
     onError: (e: any) => toast({ title: "Clear failed", description: e.message, variant: "destructive" }),
   });
@@ -391,6 +402,26 @@ export default function SettingsPage() {
           >
             {clearSnapshots.isPending ? <Loader2 size={12} className="animate-spin" /> : <Trash2 size={12} />}
             {clearSnapshots.isPending ? "Clearing…" : "Clear History"}
+          </Button>
+        </div>
+
+        <div className="border-t border-destructive/20 pt-3 flex items-center justify-between gap-4">
+          <div>
+            <p className="text-xs font-medium text-foreground">Clear Stored Credentials</p>
+            <p className="text-xs text-muted-foreground mt-0.5">
+              Wipes username, password, and API key from the database immediately. Auth type is set to None. Use before decommissioning or sharing this instance.
+            </p>
+          </div>
+          <Button
+            data-testid="button-clear-credentials"
+            variant="destructive"
+            size="sm"
+            className="flex-shrink-0 gap-1.5 text-xs h-8"
+            onClick={() => clearCredentials.mutate()}
+            disabled={clearCredentials.isPending}
+          >
+            {clearCredentials.isPending ? <Loader2 size={12} className="animate-spin" /> : <ShieldOff size={12} />}
+            {clearCredentials.isPending ? "Clearing…" : "Clear Credentials"}
           </Button>
         </div>
       </div>

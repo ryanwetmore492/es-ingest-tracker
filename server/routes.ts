@@ -399,6 +399,12 @@ export async function registerRoutes(httpServer: Server, app: Express) {
     res.json({ success: true, message: "All snapshot history cleared" });
   });
 
+  // --- Clear credentials ---
+  app.post("/api/credentials/clear", (req, res) => {
+    storage.clearCredentials();
+    res.json({ success: true, message: "Credentials cleared from database" });
+  });
+
   // --- Test connection ---
   app.post("/api/test-connection", async (req, res) => {
     try {

@@ -112,6 +112,7 @@ export interface IStorage {
   getLatestSnapshotPerIndex(): IndexSnapshot[];
   deleteSnapshotsOlderThan(days: number): void;
   clearAllSnapshots(): void;
+  clearCredentials(): void;
 }
 
 export const storage: IStorage = {
@@ -215,5 +216,11 @@ export const storage: IStorage = {
 
   clearAllSnapshots() {
     sqlite.prepare("DELETE FROM index_snapshots").run();
+  },
+
+  clearCredentials() {
+    sqlite.prepare(
+      "UPDATE es_config SET username = '', password = '', api_key = '', auth_type = 'none' WHERE id = 1"
+    ).run();
   },
 };
