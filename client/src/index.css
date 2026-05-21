@@ -1,0 +1,150 @@
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+@layer base {
+  :root {
+    /* ES Dashboard: Dark-first precision theme — deep slate surfaces, electric blue accent */
+    --background: 222 18% 9%;
+    --foreground: 210 15% 88%;
+
+    --card: 222 16% 12%;
+    --card-foreground: 210 15% 88%;
+
+    --popover: 222 16% 12%;
+    --popover-foreground: 210 15% 88%;
+
+    --primary: 196 85% 52%;
+    --primary-foreground: 222 18% 9%;
+
+    --secondary: 222 14% 18%;
+    --secondary-foreground: 210 12% 70%;
+
+    --muted: 222 14% 16%;
+    --muted-foreground: 210 10% 50%;
+
+    --accent: 196 85% 52%;
+    --accent-foreground: 222 18% 9%;
+
+    --destructive: 0 65% 55%;
+    --destructive-foreground: 210 15% 88%;
+
+    --border: 222 12% 20%;
+    --input: 222 12% 20%;
+    --ring: 196 85% 52%;
+
+    --radius: 0.5rem;
+
+    /* Chart colors */
+    --chart-1: 196 85% 52%;
+    --chart-2: 38 90% 58%;
+    --chart-3: 160 60% 48%;
+    --chart-4: 280 65% 62%;
+    --chart-5: 15 80% 58%;
+
+    /* Custom tokens */
+    --color-health-green: #22c55e;
+    --color-health-yellow: #eab308;
+    --color-health-red: #ef4444;
+    --color-health-unknown: #6b7280;
+
+    --color-alert-fire: #ef4444;
+    --color-alert-ack: #6b7280;
+    --color-over-limit: #f97316;
+  }
+
+  .dark {
+    --background: 222 18% 9%;
+    --foreground: 210 15% 88%;
+    --card: 222 16% 12%;
+    --card-foreground: 210 15% 88%;
+    --popover: 222 16% 12%;
+    --popover-foreground: 210 15% 88%;
+    --primary: 196 85% 52%;
+    --primary-foreground: 222 18% 9%;
+    --secondary: 222 14% 18%;
+    --secondary-foreground: 210 12% 70%;
+    --muted: 222 14% 16%;
+    --muted-foreground: 210 10% 50%;
+    --accent: 196 85% 52%;
+    --accent-foreground: 222 18% 9%;
+    --destructive: 0 65% 55%;
+    --destructive-foreground: 210 15% 88%;
+    --border: 222 12% 20%;
+    --input: 222 12% 20%;
+    --ring: 196 85% 52%;
+  }
+}
+
+@layer base {
+  * {
+    @apply border-border;
+  }
+  body {
+    @apply bg-background text-foreground;
+    font-family: 'Inter', 'Helvetica Neue', sans-serif;
+    -webkit-font-smoothing: antialiased;
+    -moz-osx-font-smoothing: grayscale;
+  }
+
+  .mono {
+    font-family: 'JetBrains Mono', 'Consolas', monospace;
+    font-variant-numeric: tabular-nums lining-nums;
+  }
+
+  /* Scrollbar styling */
+  ::-webkit-scrollbar { width: 6px; height: 6px; }
+  ::-webkit-scrollbar-track { background: transparent; }
+  ::-webkit-scrollbar-thumb { background: hsl(var(--border)); border-radius: 3px; }
+  ::-webkit-scrollbar-thumb:hover { background: hsl(var(--muted-foreground)); }
+}
+
+/* Health dot colors */
+.health-green { color: var(--color-health-green); }
+.health-yellow { color: var(--color-health-yellow); }
+.health-red { color: var(--color-health-red); }
+.health-unknown { color: var(--color-health-unknown); }
+
+/* Pulse animation for active alerts */
+@keyframes pulse-alert {
+  0%, 100% { opacity: 1; }
+  50% { opacity: 0.4; }
+}
+.pulse-alert { animation: pulse-alert 2s cubic-bezier(0.4, 0, 0.6, 1) infinite; }
+
+/* Number animation */
+@keyframes count-up {
+  from { opacity: 0; transform: translateY(4px); }
+  to { opacity: 1; transform: translateY(0); }
+}
+.count-appear { animation: count-up 0.4s ease-out forwards; }
+
+/* Sidebar nav active */
+.nav-item-active {
+  @apply bg-secondary text-foreground;
+}
+.nav-item-active .nav-icon {
+  color: hsl(var(--primary));
+}
+
+/* Over-limit row highlight */
+.row-over-limit {
+  border-left: 2px solid var(--color-over-limit) !important;
+}
+
+/* Sticky table header */
+.sticky-thead th {
+  position: sticky;
+  top: 0;
+  z-index: 1;
+  background: hsl(var(--card));
+}
+
+/* Chart tooltip */
+.recharts-tooltip-wrapper .recharts-default-tooltip {
+  background: hsl(var(--card)) !important;
+  border: 1px solid hsl(var(--border)) !important;
+  border-radius: 6px !important;
+  font-family: 'Inter', sans-serif !important;
+  font-size: 12px !important;
+}
