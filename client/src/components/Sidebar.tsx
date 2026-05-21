@@ -1,14 +1,14 @@
-import { useLocation, Link } from "wouter";
 import { useHashLocation } from "wouter/use-hash-location";
-import { useQuery } from "@tanstack/react-query";
-import { BarChart2, Layers, Bell, Settings, RefreshCw, Database } from "lucide-react";
-import { SiGithub } from "react-icons/si";
+import { Link } from "wouter";
+import { useQuery, useMutation } from "@tanstack/react-query";
+import { BarChart2, Layers, Bell, Settings, RefreshCw, Timer, Pause, Play } from "lucide-react";
 import { cn } from "@/lib/utils";
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
 import { apiRequest, queryClient } from "@/lib/queryClient";
 import { useToast } from "@/hooks/use-toast";
-import { useState } from "react";
+import { useAutoRefresh } from "@/hooks/useAutoRefresh";
+import { SiGithub } from "react-icons/si";
 
 const NAV = [
   { href: "/", label: "Overview", Icon: BarChart2 },
@@ -17,27 +17,41 @@ const NAV = [
   { href: "/settings", label: "Settings", Icon: Settings },
 ];
 
+function formatCountdown(sec: number): string {
+  if (sec >= 3600) return `${Math.floor(sec / 3600)}h ${Math.floor((sec % 3600) / 60)}m`;
+  if (sec >= 60) return `${Math.floor(sec / 60)}m ${sec % 60}s`;
+  return `${sec}s`;
+}
+
 export default function Sidebar() {
   const [location] = useHashLocation();
   const { toast } = useToast();
-  const [refreshing, setRefreshing] = useState(false);
 
-  const { data: events } = useQuery<any[]>({
-    queryKey: ["/api/alerts/events"],
-    refetchInterval: 30000,
-  });
+  const { data: cfg } = useQuery<any>({ queryKey: ["/api/config"], refetchInterval: 10000 });
+  const { data: events } = useQuery<any[]>({ queryKey: ["/api/alerts/events"], refetchInterval: 30000 });
+
+  const isMock = !cfg || cfg.useMockData;
   const activeAlerts = (events ?? []).filter((e: any) => !e.acknowledged).length;
 
-  async function handleRefresh() {
-    setRefreshing(true);
+  const { enabled, countdown, lastRefreshed, refreshing, doRefresh } = useAutoRefresh(cfg);
+
+  // Toggle auto-refresh on/off
+  const toggleRefresh = useMutation({
+    mutationFn: () => apiRequest("POST", "/api/config", {
+      ...cfg,
+      password: cfg?.password ?? "",
+      apiKey: cfg?.apiKey ?? "",
+      autoRefreshEnabled: !cfg?.autoRefreshEnabled,
+    }),
+    onSuccess: () => queryClient.invalidateQueries({ queryKey: ["/api/config"] }),
+  });
+
+  async function handleManualRefresh() {
     try {
-      await apiRequest("POST", "/api/refresh");
-      await queryClient.invalidateQueries();
-      toast({ title: "Data refreshed", description: "Dashboard updated with latest stats." });
+      await doRefresh();
+      toast({ title: "Data refreshed" });
     } catch (e: any) {
       toast({ title: "Refresh failed", description: e.message, variant: "destructive" });
-    } finally {
-      setRefreshing(false);
     }
   }
 
@@ -86,6 +100,46 @@ export default function Sidebar() {
         })}
       </nav>
 
+      {/* Auto-refresh status (live mode only) */}
+      {!isMock && (
+        <div className="px-3 pb-2">
+          <div className={cn(
+            "rounded-md border px-3 py-2 space-y-1.5",
+            enabled ? "border-primary/30 bg-primary/5" : "border-border bg-muted/30"
+          )}>
+            <div className="flex items-center justify-between">
+              <span className="text-xs font-medium text-foreground flex items-center gap-1.5">
+                <Timer size={11} className={enabled ? "text-primary" : "text-muted-foreground"} />
+                Auto-refresh
+              </span>
+              <button
+                data-testid="button-toggle-autorefresh"
+                onClick={() => toggleRefresh.mutate()}
+                className={cn(
+                  "text-xs px-1.5 py-0.5 rounded flex items-center gap-1 transition-colors",
+                  enabled
+                    ? "bg-primary/20 text-primary hover:bg-primary/30"
+                    : "bg-muted text-muted-foreground hover:text-foreground"
+                )}
+              >
+                {enabled ? <Pause size={10} /> : <Play size={10} />}
+                {enabled ? "On" : "Off"}
+              </button>
+            </div>
+            {enabled && (
+              <div className="text-xs text-muted-foreground mono">
+                Next: <span className="text-foreground">{formatCountdown(countdown)}</span>
+              </div>
+            )}
+            {lastRefreshed && (
+              <div className="text-xs text-muted-foreground">
+                Last: {lastRefreshed.toLocaleTimeString([], { hour: "2-digit", minute: "2-digit", second: "2-digit" })}
+              </div>
+            )}
+          </div>
+        </div>
+      )}
+
       {/* Refresh + Version */}
       <div className="p-3 border-t border-border space-y-2">
         <Button
@@ -93,7 +147,7 @@ export default function Sidebar() {
           variant="secondary"
           size="sm"
           className="w-full gap-2 text-xs"
-          onClick={handleRefresh}
+          onClick={handleManualRefresh}
           disabled={refreshing}
         >
           <RefreshCw size={13} className={refreshing ? "animate-spin" : ""} />

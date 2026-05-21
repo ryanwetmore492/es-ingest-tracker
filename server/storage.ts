@@ -23,6 +23,8 @@ sqlite.exec(`
     api_key TEXT NOT NULL DEFAULT '',
     kibana_host TEXT NOT NULL DEFAULT '',
     use_mock_data INTEGER NOT NULL DEFAULT 1,
+    auto_refresh_enabled INTEGER NOT NULL DEFAULT 0,
+    auto_refresh_interval INTEGER NOT NULL DEFAULT 300,
     updated_at TEXT NOT NULL DEFAULT (datetime('now'))
   );
 
@@ -52,6 +54,7 @@ sqlite.exec(`
   CREATE TABLE IF NOT EXISTS index_snapshots (
     id INTEGER PRIMARY KEY AUTOINCREMENT,
     snapshot_date TEXT NOT NULL,
+    snapshot_hour INTEGER NOT NULL DEFAULT 0,
     index_name TEXT NOT NULL,
     docs_count INTEGER NOT NULL DEFAULT 0,
     store_size_bytes INTEGER NOT NULL DEFAULT 0,
@@ -63,13 +66,23 @@ sqlite.exec(`
   );
 `);
 
-// Safe migration: add auth columns to existing es_config tables
+// Safe migration: add new columns to existing tables
 const existingCols = (sqlite.prepare("PRAGMA table_info(es_config)").all() as any[]).map((c: any) => c.name);
 if (!existingCols.includes("auth_type")) {
   sqlite.exec("ALTER TABLE es_config ADD COLUMN auth_type TEXT NOT NULL DEFAULT 'basic'");
 }
 if (!existingCols.includes("api_key")) {
   sqlite.exec("ALTER TABLE es_config ADD COLUMN api_key TEXT NOT NULL DEFAULT ''");
+}
+if (!existingCols.includes("auto_refresh_enabled")) {
+  sqlite.exec("ALTER TABLE es_config ADD COLUMN auto_refresh_enabled INTEGER NOT NULL DEFAULT 0");
+}
+if (!existingCols.includes("auto_refresh_interval")) {
+  sqlite.exec("ALTER TABLE es_config ADD COLUMN auto_refresh_interval INTEGER NOT NULL DEFAULT 300");
+}
+const snapCols = (sqlite.prepare("PRAGMA table_info(index_snapshots)").all() as any[]).map((c: any) => c.name);
+if (!snapCols.includes("snapshot_hour")) {
+  sqlite.exec("ALTER TABLE index_snapshots ADD COLUMN snapshot_hour INTEGER NOT NULL DEFAULT 0");
 }
 
 // Seed default config if empty
@@ -114,6 +127,7 @@ export interface IStorage {
   clearAllSnapshots(): void;
   clearAlertEvents(): void;
   clearCredentials(): void;
+  getSnapshotsForTimeframe(hours: number): IndexSnapshot[];
 }
 
 export const storage: IStorage = {
@@ -213,6 +227,29 @@ export const storage: IStorage = {
     cutoff.setDate(cutoff.getDate() - days);
     const cutoffStr = cutoff.toISOString().slice(0, 10);
     sqlite.prepare("DELETE FROM index_snapshots WHERE snapshot_date < ?").run(cutoffStr);
+  },
+
+  getSnapshotsForTimeframe(hours: number) {
+    const cutoff = new Date();
+    cutoff.setHours(cutoff.getHours() - hours);
+    const cutoffStr = cutoff.toISOString();
+    const rows = sqlite.prepare(`
+      SELECT id,
+             snapshot_date   AS snapshotDate,
+             snapshot_hour   AS snapshotHour,
+             index_name      AS indexName,
+             docs_count      AS docsCount,
+             store_size_bytes AS storeSizeBytes,
+             primary_shards  AS primaryShards,
+             replica_shards  AS replicaShards,
+             health,
+             status,
+             captured_at     AS capturedAt
+      FROM index_snapshots
+      WHERE captured_at >= ?
+      ORDER BY captured_at ASC
+    `).all(cutoffStr) as IndexSnapshot[];
+    return rows;
   },
 
   clearAllSnapshots() {

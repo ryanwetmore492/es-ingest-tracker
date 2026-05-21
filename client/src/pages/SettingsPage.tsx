@@ -1,6 +1,6 @@
 import { useQuery, useMutation } from "@tanstack/react-query";
 import { useState, useEffect } from "react";
-import { ServerCog, Eye, EyeOff, CheckCircle, XCircle, Loader2, Info, ShieldCheck, Key, User, Trash2, ShieldOff } from "lucide-react";
+import { ServerCog, Eye, EyeOff, CheckCircle, XCircle, Loader2, Info, ShieldCheck, Key, User, Trash2, ShieldOff, Timer } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
@@ -8,6 +8,7 @@ import { Switch } from "@/components/ui/switch";
 import { Badge } from "@/components/ui/badge";
 import { Separator } from "@/components/ui/separator";
 import { Tabs, TabsList, TabsTrigger, TabsContent } from "@/components/ui/tabs";
+import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { apiRequest, queryClient } from "@/lib/queryClient";
 import { useToast } from "@/hooks/use-toast";
 
@@ -48,6 +49,8 @@ export default function SettingsPage() {
     apiKey: "",
     kibanaHost: "",
     useMockData: true,
+    autoRefreshEnabled: false,
+    autoRefreshInterval: 300,
   });
 
   const { data: cfg } = useQuery<any>({ queryKey: ["/api/config"] });
@@ -62,6 +65,8 @@ export default function SettingsPage() {
         apiKey: cfg.apiKey ?? "",
         kibanaHost: cfg.kibanaHost ?? "",
         useMockData: cfg.useMockData ?? true,
+        autoRefreshEnabled: cfg.autoRefreshEnabled ?? false,
+        autoRefreshInterval: cfg.autoRefreshInterval ?? 300,
       });
     }
   }, [cfg]);
@@ -315,6 +320,49 @@ export default function SettingsPage() {
           )}
         </div>
       </div>
+
+      {/* Auto-Refresh Settings — live mode only */}
+      {!form.useMockData && (
+        <div className="bg-card border border-border rounded-lg p-4 space-y-4">
+          <div className="flex items-center gap-2">
+            <Timer size={15} className="text-primary" />
+            <p className="text-sm font-semibold text-foreground">Auto-Refresh</p>
+          </div>
+
+          <div className="flex items-center justify-between">
+            <div>
+              <p className="text-xs font-medium text-foreground">Enable Auto-Refresh</p>
+              <p className="text-xs text-muted-foreground mt-0.5">Automatically poll Elasticsearch on a configurable interval</p>
+            </div>
+            <Switch
+              data-testid="toggle-autorefresh"
+              checked={form.autoRefreshEnabled}
+              onCheckedChange={v => setForm(p => ({ ...p, autoRefreshEnabled: v }))}
+            />
+          </div>
+
+          <div className="space-y-1.5">
+            <Label className="text-xs">Refresh Interval</Label>
+            <Select
+              value={String(form.autoRefreshInterval)}
+              onValueChange={v => setForm(p => ({ ...p, autoRefreshInterval: Number(v) }))}
+            >
+              <SelectTrigger data-testid="select-refresh-interval" className="h-8 text-xs w-48">
+                <SelectValue />
+              </SelectTrigger>
+              <SelectContent>
+                <SelectItem value="30">30 seconds</SelectItem>
+                <SelectItem value="60">1 minute</SelectItem>
+                <SelectItem value="300">5 minutes</SelectItem>
+                <SelectItem value="900">15 minutes</SelectItem>
+                <SelectItem value="1800">30 minutes</SelectItem>
+                <SelectItem value="3600">1 hour</SelectItem>
+              </SelectContent>
+            </Select>
+            <p className="text-xs text-muted-foreground">Applies immediately after saving. The sidebar shows a live countdown.</p>
+          </div>
+        </div>
+      )}
 
       {/* Required Permissions */}
       <div className="bg-card border border-border rounded-lg p-4 space-y-3">

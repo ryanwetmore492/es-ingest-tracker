@@ -1,10 +1,13 @@
 import { useQuery } from "@tanstack/react-query";
-import { BarChart, Bar, LineChart, Line, XAxis, YAxis, CartesianGrid, Tooltip, Legend, ResponsiveContainer } from "recharts";
+import { useState } from "react";
+import { apiRequest } from "@/lib/queryClient";
+import { BarChart, Bar, LineChart, Line, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer } from "recharts";
 import { Database, HardDrive, BarChart2, AlertCircle, Layers } from "lucide-react";
 import KpiCard from "@/components/KpiCard";
-import { formatBytes, formatGB, formatDocs, formatPct, shortDate } from "@/lib/format";
+import { formatBytes, formatGB, formatDocs } from "@/lib/format";
 import { Badge } from "@/components/ui/badge";
 import { Skeleton } from "@/components/ui/skeleton";
+import { cn } from "@/lib/utils";
 
 const CHART_COLORS = [
   "hsl(196, 85%, 52%)",
@@ -15,6 +18,17 @@ const CHART_COLORS = [
   "hsl(340, 70%, 60%)",
 ];
 
+const TIMEFRAMES = [
+  { label: "1h",  hours: 1   },
+  { label: "6h",  hours: 6   },
+  { label: "12h", hours: 12  },
+  { label: "24h", hours: 24  },
+  { label: "48h", hours: 48  },
+  { label: "7d",  hours: 168 },
+] as const;
+
+type TimeframeHours = typeof TIMEFRAMES[number]["hours"];
+
 function PageHeader({ children }: { children: React.ReactNode }) {
   return (
     <div className="flex items-center justify-between mb-6">
@@ -24,6 +38,8 @@ function PageHeader({ children }: { children: React.ReactNode }) {
 }
 
 export default function OverviewPage() {
+  const [timeframeHours, setTimeframeHours] = useState<TimeframeHours>(168);
+
   const { data: cfg } = useQuery<any>({
     queryKey: ["/api/config"],
   });
@@ -34,45 +50,52 @@ export default function OverviewPage() {
     refetchInterval: 60000,
   });
 
-  const { data: dailyIngest, isLoading: ingestLoading } = useQuery<any>({
-    queryKey: ["/api/dashboard/daily-ingest"],
+  // Single unified timeframe query powers both charts
+  const { data: tfData, isLoading: tfLoading } = useQuery<any>({
+    queryKey: ["/api/dashboard/timeframe", timeframeHours],
+    queryFn: async () => {
+      const res = await apiRequest("GET", `/api/dashboard/timeframe?hours=${timeframeHours}`) as any;
+      return res.json ? res.json() : res;
+    },
     refetchInterval: 60000,
   });
 
-  const { data: trend, isLoading: trendLoading } = useQuery<any>({
-    queryKey: ["/api/dashboard/trend"],
-    refetchInterval: 60000,
-  });
+  const useHourly = tfData?.useHourly ?? false;
 
-  // Build stacked bar chart data
-  const barData = dailyIngest
-    ? dailyIngest.dates.map((date: string, i: number) => {
-        const entry: Record<string, any> = { date: shortDate(date) };
-        for (const idx of dailyIngest.topIndices) {
-          entry[idx] = Math.round((dailyIngest.series[idx]?.[i] ?? 0) / 1_073_741_824 * 100) / 100; // GB
+  // Build stacked bar chart data from timeframe response
+  const barData = tfData
+    ? tfData.labels.map((label: string, i: number) => {
+        const entry: Record<string, any> = { date: label };
+        for (const idx of (tfData.topIndices ?? [])) {
+          entry[idx] = Math.round((tfData.series?.[idx]?.[i] ?? 0) / 1_073_741_824 * 100) / 100; // GB
         }
         return entry;
       })
     : [];
 
-  // Build line chart data
-  const lineData = trend
-    ? trend.dates.map((date: string, i: number) => ({
-        date: shortDate(date),
-        total: +(trend.totals[i] / 1_073_741_824).toFixed(1),
-        docs: trend.docTotals[i],
+  // Build line chart data from timeframe response
+  const lineData = tfData
+    ? tfData.labels.map((label: string, i: number) => ({
+        date: label,
+        total: +(tfData.totals[i] / 1_073_741_824).toFixed(1),
+        docs: tfData.docTotals[i],
       }))
     : [];
 
   const truncateIndex = (name: string, max = 20) =>
     name.length > max ? name.slice(0, max) + "…" : name;
 
+  const timeframeLabel = TIMEFRAMES.find(t => t.hours === timeframeHours)?.label ?? "7d";
+  const chartSubtitle = useHourly
+    ? `Hourly storage delta — last ${timeframeLabel} (GB)`
+    : `Daily storage delta — last ${timeframeLabel} (GB)`;
+
   return (
     <div className="p-6 space-y-6">
       <PageHeader>
         <div>
           <h1 className="text-lg font-semibold text-foreground">Overview</h1>
-          <p className="text-xs text-muted-foreground mt-0.5">Ingest volume · shard sizing · 7-day trends</p>
+          <p className="text-xs text-muted-foreground mt-0.5">Ingest volume · shard sizing · trends</p>
         </div>
         {isMock ? (
           <Badge variant="outline" className="text-xs gap-1.5 border-amber-500/40 text-amber-400">
@@ -129,53 +152,109 @@ export default function OverviewPage() {
         />
       </div>
 
+      {/* Timeframe toggle */}
+      <div className="flex items-center gap-1.5">
+        <span className="text-xs text-muted-foreground mr-1">Timeframe:</span>
+        {TIMEFRAMES.map(({ label, hours }) => (
+          <button
+            key={hours}
+            data-testid={`btn-timeframe-${label}`}
+            onClick={() => setTimeframeHours(hours)}
+            className={cn(
+              "text-xs px-2.5 py-1 rounded-md font-medium transition-all",
+              timeframeHours === hours
+                ? "bg-primary text-primary-foreground"
+                : "bg-muted text-muted-foreground hover:text-foreground hover:bg-muted/80"
+            )}
+          >
+            {label}
+          </button>
+        ))}
+        {useHourly && (
+          <Badge variant="outline" className="text-xs ml-2 border-primary/30 text-primary">
+            Hourly buckets
+          </Badge>
+        )}
+      </div>
+
       {/* Charts row */}
       <div className="grid grid-cols-1 xl:grid-cols-2 gap-4">
-        {/* Daily Ingest Volume Bar Chart */}
+        {/* Ingest Volume Bar Chart */}
         <div className="bg-card border border-border rounded-lg p-4">
           <div className="mb-4">
-            <p className="text-sm font-semibold text-foreground">Daily Ingest Volume</p>
-            <p className="text-xs text-muted-foreground">Storage delta per index — last 7 days (GB)</p>
+            <p className="text-sm font-semibold text-foreground">Ingest Volume</p>
+            <p className="text-xs text-muted-foreground">{chartSubtitle}</p>
           </div>
-          {ingestLoading ? (
+          {tfLoading ? (
             <Skeleton className="h-56 w-full" />
           ) : (
             <ResponsiveContainer width="100%" height={230}>
               <BarChart data={barData} margin={{ top: 4, right: 8, left: -10, bottom: 0 }}>
                 <CartesianGrid strokeDasharray="3 3" stroke="hsl(var(--border))" vertical={false} />
-                <XAxis dataKey="date" tick={{ fontSize: 11, fill: "hsl(var(--muted-foreground))" }} tickLine={false} axisLine={false} />
-                <YAxis tick={{ fontSize: 11, fill: "hsl(var(--muted-foreground))", fontFamily: "JetBrains Mono" }} tickLine={false} axisLine={false} tickFormatter={(v) => `${v}G`} />
+                <XAxis
+                  dataKey="date"
+                  tick={{ fontSize: 10, fill: "hsl(var(--muted-foreground))" }}
+                  tickLine={false}
+                  axisLine={false}
+                  interval="preserveStartEnd"
+                />
+                <YAxis
+                  tick={{ fontSize: 11, fill: "hsl(var(--muted-foreground))", fontFamily: "JetBrains Mono" }}
+                  tickLine={false}
+                  axisLine={false}
+                  tickFormatter={(v) => `${v}G`}
+                />
                 <Tooltip
                   contentStyle={{ background: "hsl(var(--card))", border: "1px solid hsl(var(--border))", borderRadius: "8px", fontSize: "11px" }}
                   formatter={(val: any, name: any) => [`${Number(val).toFixed(2)} GB`, truncateIndex(name)]}
                   labelStyle={{ color: "hsl(var(--foreground))", fontWeight: 600 }}
                   cursor={{ fill: "hsl(var(--muted) / 0.5)" }}
                 />
-                {dailyIngest?.topIndices?.map((idx: string, i: number) => (
-                  <Bar key={idx} dataKey={idx} stackId="a" fill={CHART_COLORS[i % CHART_COLORS.length]} radius={i === (dailyIngest.topIndices.length - 1) ? [2, 2, 0, 0] : [0, 0, 0, 0]} />
+                {(tfData?.topIndices ?? []).map((idx: string, i: number) => (
+                  <Bar
+                    key={idx}
+                    dataKey={idx}
+                    stackId="a"
+                    fill={CHART_COLORS[i % CHART_COLORS.length]}
+                    radius={i === ((tfData?.topIndices?.length ?? 1) - 1) ? [2, 2, 0, 0] : [0, 0, 0, 0]}
+                  />
                 ))}
               </BarChart>
             </ResponsiveContainer>
           )}
         </div>
 
-        {/* 7-day Total Store Size Trend */}
+        {/* Total Store Size Trend */}
         <div className="bg-card border border-border rounded-lg p-4">
           <div className="mb-4">
-            <p className="text-sm font-semibold text-foreground">7-Day Ingest Trend</p>
-            <p className="text-xs text-muted-foreground">Total cumulative store size across all indices (GB)</p>
+            <p className="text-sm font-semibold text-foreground">Ingest Trend</p>
+            <p className="text-xs text-muted-foreground">Total cumulative store size — last {timeframeLabel} (GB)</p>
           </div>
-          {trendLoading ? (
+          {tfLoading ? (
             <Skeleton className="h-56 w-full" />
           ) : (
             <ResponsiveContainer width="100%" height={230}>
               <LineChart data={lineData} margin={{ top: 4, right: 8, left: -10, bottom: 0 }}>
                 <CartesianGrid strokeDasharray="3 3" stroke="hsl(var(--border))" vertical={false} />
-                <XAxis dataKey="date" tick={{ fontSize: 11, fill: "hsl(var(--muted-foreground))" }} tickLine={false} axisLine={false} />
-                <YAxis tick={{ fontSize: 11, fill: "hsl(var(--muted-foreground))", fontFamily: "JetBrains Mono" }} tickLine={false} axisLine={false} tickFormatter={(v) => `${v}G`} />
+                <XAxis
+                  dataKey="date"
+                  tick={{ fontSize: 10, fill: "hsl(var(--muted-foreground))" }}
+                  tickLine={false}
+                  axisLine={false}
+                  interval="preserveStartEnd"
+                />
+                <YAxis
+                  tick={{ fontSize: 11, fill: "hsl(var(--muted-foreground))", fontFamily: "JetBrains Mono" }}
+                  tickLine={false}
+                  axisLine={false}
+                  tickFormatter={(v) => `${v}G`}
+                />
                 <Tooltip
                   contentStyle={{ background: "hsl(var(--card))", border: "1px solid hsl(var(--border))", borderRadius: "8px", fontSize: "11px" }}
-                  formatter={(val: any, name: any) => [name === "total" ? `${Number(val).toFixed(1)} GB` : formatDocs(Number(val)), name === "total" ? "Store Size" : "Documents"]}
+                  formatter={(val: any, name: any) => [
+                    name === "total" ? `${Number(val).toFixed(1)} GB` : formatDocs(Number(val)),
+                    name === "total" ? "Store Size" : "Documents",
+                  ]}
                   labelStyle={{ color: "hsl(var(--foreground))", fontWeight: 600 }}
                   cursor={{ stroke: "hsl(var(--border))" }}
                 />

@@ -1,7 +1,7 @@
 import type { Express } from "express";
 import type { Server } from "http";
 import { storage } from "./storage";
-import { generateDailySnapshots, getMockCurrentIndices } from "./mockData";
+import { generateDailySnapshots, generateHourlySnapshots, getMockCurrentIndices } from "./mockData";
 import { insertEsConfigSchema, insertAlertRuleSchema } from "@shared/schema";
 import { z } from "zod";
 
@@ -10,8 +10,11 @@ function seedMockDataIfNeeded() {
   const today = new Date().toISOString().slice(0, 10);
   const existing = storage.getSnapshotsByDate(today);
   if (existing.length === 0) {
-    const snapshots = generateDailySnapshots(6); // 7 days including today
-    storage.saveSnapshots(snapshots);
+    const dailySnaps = generateDailySnapshots(6); // 7 days including today
+    storage.saveSnapshots(dailySnaps);
+    // Also seed hourly data for short timeframe views (last 24h)
+    const hourlySnaps = generateHourlySnapshots(24);
+    storage.saveSnapshots(hourlySnaps);
   }
 }
 
@@ -146,8 +149,10 @@ export async function registerRoutes(httpServer: Server, app: Express) {
         storage.clearAlertEvents();
         // Switching back to mock: immediately re-seed so charts aren't empty
         if (data.useMockData) {
-          const snapshots = generateDailySnapshots(6);
-          storage.saveSnapshots(snapshots);
+          const dailySnaps = generateDailySnapshots(6);
+          storage.saveSnapshots(dailySnaps);
+          const hourlySnaps = generateHourlySnapshots(24);
+          storage.saveSnapshots(hourlySnaps);
         }
       }
 
@@ -339,6 +344,88 @@ export async function registerRoutes(httpServer: Server, app: Express) {
     res.json({ dates, totals, docTotals });
   });
 
+  // --- Timeframe trend (supports 1h, 6h, 12h, 24h, 48h, 168h=7d) ---
+  app.get("/api/dashboard/timeframe", (req, res) => {
+    const hours = Math.min(Math.max(parseInt(req.query.hours as string ?? "24", 10), 1), 168);
+    const snapshots = storage.getSnapshotsForTimeframe(hours);
+
+    // Build time buckets — for <=24h use hourly buckets, else daily
+    const useHourly = hours <= 48;
+    const bucketMap = new Map<string, number>(); // label → total bytes
+    const docBucketMap = new Map<string, number>();
+
+    for (const snap of snapshots) {
+      let label: string;
+      if (useHourly) {
+        const d = new Date(snap.capturedAt);
+        label = `${d.toLocaleDateString("en-US", { month: "short", day: "numeric" })} ${String(d.getHours()).padStart(2, "0")}:00`;
+      } else {
+        const d = new Date(snap.snapshotDate + "T12:00:00");
+        label = d.toLocaleDateString("en-US", { month: "short", day: "numeric" });
+      }
+      bucketMap.set(label, (bucketMap.get(label) ?? 0) + snap.storeSizeBytes);
+      docBucketMap.set(label, (docBucketMap.get(label) ?? 0) + snap.docsCount);
+    }
+
+    // Generate ordered bucket labels
+    const labels: string[] = [];
+    const now = new Date();
+    if (useHourly) {
+      for (let h = hours; h >= 0; h--) {
+        const t = new Date(now);
+        t.setHours(t.getHours() - h);
+        t.setMinutes(0, 0, 0);
+        const label = `${t.toLocaleDateString("en-US", { month: "short", day: "numeric" })} ${String(t.getHours()).padStart(2, "0")}:00`;
+        if (!labels.includes(label)) labels.push(label);
+      }
+    } else {
+      for (let d = Math.ceil(hours / 24); d >= 0; d--) {
+        const dt = new Date(now);
+        dt.setDate(dt.getDate() - d);
+        const label = dt.toLocaleDateString("en-US", { month: "short", day: "numeric" });
+        if (!labels.includes(label)) labels.push(label);
+      }
+    }
+
+    const totals = labels.map(l => +(( bucketMap.get(l) ?? 0) / 1_073_741_824).toFixed(2));
+    const docTotals = labels.map(l => docBucketMap.get(l) ?? 0);
+
+    // Per-index series for bar chart (top 6 non-system)
+    const latestSnaps = storage.getLatestSnapshotPerIndex();
+    const topIndices = latestSnaps.filter(s => !s.indexName.startsWith(".")).slice(0, 6).map(s => s.indexName);
+
+    const indexBuckets = new Map<string, Map<string, number>>();
+    for (const idx of topIndices) indexBuckets.set(idx, new Map());
+
+    for (const snap of snapshots) {
+      if (!topIndices.includes(snap.indexName)) continue;
+      let label: string;
+      if (useHourly) {
+        const d = new Date(snap.capturedAt);
+        label = `${d.toLocaleDateString("en-US", { month: "short", day: "numeric" })} ${String(d.getHours()).padStart(2, "0")}:00`;
+      } else {
+        const d = new Date(snap.snapshotDate + "T12:00:00");
+        label = d.toLocaleDateString("en-US", { month: "short", day: "numeric" });
+      }
+      const m = indexBuckets.get(snap.indexName)!;
+      // Keep max size seen in this bucket (last snapshot in the hour)
+      if (!m.has(label) || snap.storeSizeBytes > m.get(label)!) {
+        m.set(label, snap.storeSizeBytes);
+      }
+    }
+
+    // Compute delta per bucket for bar chart
+    const series: Record<string, number[]> = {};
+    for (const idx of topIndices) {
+      const m = indexBuckets.get(idx)!;
+      const vals = labels.map(l => (m.get(l) ?? 0) / 1_073_741_824);
+      // Delta = current - previous
+      series[idx] = vals.map((v, i) => i === 0 ? +(v * 0.05).toFixed(3) : +Math.max(0, v - vals[i - 1]).toFixed(3));
+    }
+
+    res.json({ labels, totals, docTotals, series, topIndices, useHourly, hours });
+  });
+
   // --- Alert Rules ---
   app.get("/api/alerts/rules", (_req, res) => {
     res.json(storage.getAlertRules());
@@ -394,8 +481,10 @@ export async function registerRoutes(httpServer: Server, app: Express) {
     // Re-seed mock data if in mock mode
     const cfg = storage.getConfig();
     if (!cfg || cfg.useMockData) {
-      const snapshots = generateDailySnapshots(6);
-      storage.saveSnapshots(snapshots);
+      const dailySnaps = generateDailySnapshots(6);
+      storage.saveSnapshots(dailySnaps);
+      const hourlySnaps = generateHourlySnapshots(24);
+      storage.saveSnapshots(hourlySnaps);
       return res.json({ success: true, message: "Snapshots and alerts cleared; mock data re-seeded" });
     }
     res.json({ success: true, message: "All snapshot history and alert events cleared" });

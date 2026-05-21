@@ -6,12 +6,15 @@ import { z } from "zod";
 export const esConfig = sqliteTable("es_config", {
   id: integer("id").primaryKey({ autoIncrement: true }),
   host: text("host").notNull().default("http://localhost:9200"),
-  authType: text("auth_type").notNull().default("basic"), // "basic" | "apikey" | "none"
+  authType: text("auth_type").notNull().default("basic"),
   username: text("username").notNull().default(""),
   password: text("password").notNull().default(""),
-  apiKey: text("api_key").notNull().default(""),        // base64 id:key or raw key
+  apiKey: text("api_key").notNull().default(""),
   kibanaHost: text("kibana_host").notNull().default(""),
   useMockData: integer("use_mock_data", { mode: "boolean" }).notNull().default(true),
+  // Auto-refresh: interval in seconds (0 = disabled), only active in live mode
+  autoRefreshEnabled: integer("auto_refresh_enabled", { mode: "boolean" }).notNull().default(false),
+  autoRefreshInterval: integer("auto_refresh_interval").notNull().default(300), // seconds
   updatedAt: text("updated_at").notNull().default(new Date().toISOString()),
 });
 
@@ -19,7 +22,7 @@ export const esConfig = sqliteTable("es_config", {
 export const alertRules = sqliteTable("alert_rules", {
   id: integer("id").primaryKey({ autoIncrement: true }),
   name: text("name").notNull(),
-  type: text("type").notNull(), // "growth_pct" | "size_gb"
+  type: text("type").notNull(),
   threshold: real("threshold").notNull(),
   indexPattern: text("index_pattern").notNull().default("*"),
   enabled: integer("enabled", { mode: "boolean" }).notNull().default(true),
@@ -39,10 +42,13 @@ export const alertEvents = sqliteTable("alert_events", {
   acknowledged: integer("acknowledged", { mode: "boolean" }).notNull().default(false),
 });
 
-// Cached snapshots of index stats (stored per poll)
+// Snapshots now store a full ISO timestamp so sub-daily timeframes work.
+// snapshotDate is still stored (YYYY-MM-DD) for daily queries.
+// capturedAt (ISO) is the authoritative timestamp for hourly/6h/12h grouping.
 export const indexSnapshots = sqliteTable("index_snapshots", {
   id: integer("id").primaryKey({ autoIncrement: true }),
-  snapshotDate: text("snapshot_date").notNull(), // YYYY-MM-DD
+  snapshotDate: text("snapshot_date").notNull(),
+  snapshotHour: integer("snapshot_hour").notNull().default(0), // 0-23
   indexName: text("index_name").notNull(),
   docsCount: integer("docs_count").notNull().default(0),
   storeSizeBytes: integer("store_size_bytes").notNull().default(0),
@@ -62,12 +68,9 @@ export const insertIndexSnapshotSchema = createInsertSchema(indexSnapshots).omit
 // Types
 export type EsConfig = typeof esConfig.$inferSelect;
 export type InsertEsConfig = z.infer<typeof insertEsConfigSchema>;
-
 export type AlertRule = typeof alertRules.$inferSelect;
 export type InsertAlertRule = z.infer<typeof insertAlertRuleSchema>;
-
 export type AlertEvent = typeof alertEvents.$inferSelect;
 export type InsertAlertEvent = z.infer<typeof insertAlertEventSchema>;
-
 export type IndexSnapshot = typeof indexSnapshots.$inferSelect;
 export type InsertIndexSnapshot = z.infer<typeof insertIndexSnapshotSchema>;

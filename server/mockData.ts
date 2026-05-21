@@ -86,3 +86,56 @@ export function getMockCurrentIndices(): MockIndex[] {
     };
   });
 }
+
+// Generate sub-daily (hourly) mock snapshots for short timeframes
+export function generateHourlySnapshots(hoursBack: number): Array<{
+  snapshotDate: string;
+  snapshotHour: number;
+  indexName: string;
+  docsCount: number;
+  storeSizeBytes: number;
+  primaryShards: number;
+  replicaShards: number;
+  health: string;
+  status: string;
+  capturedAt: string;
+}> {
+  const results = [];
+  const now = new Date();
+
+  for (let h = hoursBack; h >= 0; h--) {
+    const ts = new Date(now);
+    ts.setHours(ts.getHours() - h);
+    // Snap to the hour boundary
+    ts.setMinutes(0, 0, 0);
+    const dateStr = ts.toISOString().slice(0, 10);
+    const hour = ts.getHours();
+    const capturedAt = ts.toISOString();
+
+    for (const idx of INDICES) {
+      // Hourly ingest: spread daily growth across 24 hours with a diurnal curve
+      const hourlyGrowthRate = idx.growth / 30 / 24;
+      const diurnal = 1 + 0.4 * Math.sin((hour - 6) * Math.PI / 12); // peak midday
+      const elapsed = hoursBack - h;
+      const growthFactor = Math.pow(1 + hourlyGrowthRate * diurnal, elapsed);
+      const noise = 1 + (seededRand(elapsed * 1000 + hour + idx.name.charCodeAt(0)) - 0.5) * 0.01;
+      const sizeBytes = Math.round(idx.baseSize * growthFactor * noise);
+      const docsCount = Math.round(sizeBytes / 800);
+
+      results.push({
+        snapshotDate: dateStr,
+        snapshotHour: hour,
+        indexName: idx.name,
+        docsCount,
+        storeSizeBytes: sizeBytes,
+        primaryShards: idx.shards,
+        replicaShards: 1,
+        health: idx.health,
+        status: "open",
+        capturedAt,
+      });
+    }
+  }
+
+  return results;
+}
