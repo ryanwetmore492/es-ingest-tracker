@@ -139,10 +139,11 @@ export async function registerRoutes(httpServer: Server, app: Express) {
         data.apiKey = existing.apiKey;
       }
 
-      // Detect mode change — clear stale snapshots so old data never bleeds through
+      // Detect mode change — clear stale snapshots AND alert events so old data never bleeds through
       const modeChanged = existing && (existing.useMockData !== data.useMockData);
       if (modeChanged) {
         storage.clearAllSnapshots();
+        storage.clearAlertEvents();
         // Switching back to mock: immediately re-seed so charts aren't empty
         if (data.useMockData) {
           const snapshots = generateDailySnapshots(6);
@@ -389,14 +390,15 @@ export async function registerRoutes(httpServer: Server, app: Express) {
   // --- Clear snapshot history ---
   app.post("/api/snapshots/clear", (req, res) => {
     storage.clearAllSnapshots();
+    storage.clearAlertEvents();
     // Re-seed mock data if in mock mode
     const cfg = storage.getConfig();
     if (!cfg || cfg.useMockData) {
       const snapshots = generateDailySnapshots(6);
       storage.saveSnapshots(snapshots);
-      return res.json({ success: true, message: "Snapshots cleared and mock data re-seeded" });
+      return res.json({ success: true, message: "Snapshots and alerts cleared; mock data re-seeded" });
     }
-    res.json({ success: true, message: "All snapshot history cleared" });
+    res.json({ success: true, message: "All snapshot history and alert events cleared" });
   });
 
   // --- Clear credentials ---
