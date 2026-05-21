@@ -185,7 +185,9 @@ export const storage: IStorage = {
 
   saveSnapshots(snapshots) {
     for (const snap of snapshots) {
-      db.insert(indexSnapshots).values({ ...snap, capturedAt: new Date().toISOString() }).run();
+      // Preserve capturedAt if already set (e.g. hourly mock seeding with historical timestamps)
+      const capturedAt = (snap as any).capturedAt ?? new Date().toISOString();
+      db.insert(indexSnapshots).values({ ...snap, capturedAt }).run();
     }
   },
 

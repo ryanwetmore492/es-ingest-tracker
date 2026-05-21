@@ -5,17 +5,36 @@ import { generateDailySnapshots, generateHourlySnapshots, getMockCurrentIndices 
 import { insertEsConfigSchema, insertAlertRuleSchema } from "@shared/schema";
 import { z } from "zod";
 
-// Seed mock data on first launch
+// Seed mock data on first launch, or if existing data has stale timestamps
 function seedMockDataIfNeeded() {
   const today = new Date().toISOString().slice(0, 10);
   const existing = storage.getSnapshotsByDate(today);
   if (existing.length === 0) {
-    const dailySnaps = generateDailySnapshots(6); // 7 days including today
-    storage.saveSnapshots(dailySnaps);
-    // Also seed hourly data for short timeframe views (last 24h)
-    const hourlySnaps = generateHourlySnapshots(24);
-    storage.saveSnapshots(hourlySnaps);
+    reseedMockData();
+    return;
   }
+
+  // Detect stale seed: if ALL captured_at timestamps are within the last 10 minutes
+  // but snapshotDate spans multiple days, the historical capturedAt was lost (old bug).
+  // Force a reseed so timeframe queries work correctly.
+  const weekSnaps = storage.getSnapshotsForTimeframe(24 * 8); // 8 days
+  const sevenDaysAgo = new Date();
+  sevenDaysAgo.setDate(sevenDaysAgo.getDate() - 6);
+  const hasOldSnaps = weekSnaps.some(s => new Date(s.capturedAt) < sevenDaysAgo);
+  if (!hasOldSnaps && weekSnaps.length > 0) {
+    // All snapshots have recent capturedAt even though snapshotDates are old — reseed
+    storage.clearAllSnapshots();
+    storage.clearAlertEvents();
+    reseedMockData();
+  }
+}
+
+function reseedMockData() {
+  const dailySnaps = generateDailySnapshots(6); // 7 days including today
+  storage.saveSnapshots(dailySnaps);
+  // Also seed hourly data for short timeframe views (last 48h)
+  const hourlySnaps = generateHourlySnapshots(48);
+  storage.saveSnapshots(hourlySnaps);
 }
 
 // Evaluate alert rules against current snapshot data
@@ -149,10 +168,7 @@ export async function registerRoutes(httpServer: Server, app: Express) {
         storage.clearAlertEvents();
         // Switching back to mock: immediately re-seed so charts aren't empty
         if (data.useMockData) {
-          const dailySnaps = generateDailySnapshots(6);
-          storage.saveSnapshots(dailySnaps);
-          const hourlySnaps = generateHourlySnapshots(24);
-          storage.saveSnapshots(hourlySnaps);
+          reseedMockData();
         }
       }
 
@@ -525,10 +541,7 @@ export async function registerRoutes(httpServer: Server, app: Express) {
     // Re-seed mock data if in mock mode
     const cfg = storage.getConfig();
     if (!cfg || cfg.useMockData) {
-      const dailySnaps = generateDailySnapshots(6);
-      storage.saveSnapshots(dailySnaps);
-      const hourlySnaps = generateHourlySnapshots(24);
-      storage.saveSnapshots(hourlySnaps);
+      reseedMockData();
       return res.json({ success: true, message: "Snapshots and alerts cleared; mock data re-seeded" });
     }
     res.json({ success: true, message: "All snapshot history and alert events cleared" });

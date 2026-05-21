@@ -63,21 +63,22 @@ export default function OverviewPage() {
   const useHourly = tfData?.useHourly ?? false;
 
   // Build stacked bar chart data from timeframe response
+  // series values are already in GB (floats) from the endpoint — no conversion needed
   const barData = tfData
     ? tfData.labels.map((label: string, i: number) => {
         const entry: Record<string, any> = { date: label };
         for (const idx of (tfData.topIndices ?? [])) {
-          entry[idx] = Math.round((tfData.series?.[idx]?.[i] ?? 0) / 1_073_741_824 * 100) / 100; // GB
+          entry[idx] = +(tfData.series?.[idx]?.[i] ?? 0).toFixed(3);
         }
         return entry;
       })
     : [];
 
-  // Build line chart data from timeframe response
+  // Build line chart data — totals are already in GB from the endpoint
   const lineData = tfData
     ? tfData.labels.map((label: string, i: number) => ({
         date: label,
-        total: +(tfData.totals[i] / 1_073_741_824).toFixed(1),
+        total: +(tfData.totals[i] ?? 0).toFixed(1),
         docs: tfData.docTotals[i],
       }))
     : [];

@@ -31,6 +31,7 @@ function seededRand(seed: number): number {
 
 export function generateDailySnapshots(daysBack: number): Array<{
   snapshotDate: string;
+  snapshotHour: number;
   indexName: string;
   docsCount: number;
   storeSizeBytes: number;
@@ -38,6 +39,7 @@ export function generateDailySnapshots(daysBack: number): Array<{
   replicaShards: number;
   health: string;
   status: string;
+  capturedAt: string;
 }> {
   const results = [];
   const today = new Date();
@@ -48,6 +50,12 @@ export function generateDailySnapshots(daysBack: number): Array<{
     const dateStr = date.toISOString().slice(0, 10);
     const dayIndex = daysBack - d;
 
+    // Stamp daily snapshots at noon on their respective day so the
+    // timeframe query's captured_at filter correctly places them in history
+    const captureTime = new Date(date);
+    captureTime.setHours(12, 0, 0, 0);
+    const capturedAt = captureTime.toISOString();
+
     for (const idx of INDICES) {
       // Apply compound daily growth with slight noise
       const growthFactor = Math.pow(1 + idx.growth / 30, dayIndex);
@@ -57,6 +65,7 @@ export function generateDailySnapshots(daysBack: number): Array<{
 
       results.push({
         snapshotDate: dateStr,
+        snapshotHour: 12,
         indexName: idx.name,
         docsCount,
         storeSizeBytes: sizeBytes,
@@ -64,6 +73,7 @@ export function generateDailySnapshots(daysBack: number): Array<{
         replicaShards: 1,
         health: idx.health,
         status: "open",
+        capturedAt,
       });
     }
   }
